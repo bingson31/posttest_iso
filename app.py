@@ -1,138 +1,98 @@
-# app.py
-
 import streamlit as st
-import os
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.prebuilt import create_react_agent
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.tools import tool
-from database_tools import text_to_sql, init_database, get_database_info
+from docx import Document
+import re
 
-# --- 1. Page Configuration and Title ---
-st.title("🏍️ Bike Catalog SQL Chatbot")
-st.caption("Ask questions about motorcycle catalog data using natural language")
+st.set_page_config(page_title="Post Test ISO 9001 & 22000", layout="wide")
 
-# --- 2. Sidebar for Settings ---
-with st.sidebar:
-    st.subheader("Settings")
-    google_api_key = st.text_input("Google AI API Key", type="password")
-    reset_button = st.button("Reset Conversation", help="Clear all messages and start fresh")
+st.title("🧩 Post Test ISO 9001:2015 & ISO 22000:2018")
+st.write("Jawablah semua pertanyaan berikut, lalu klik **Lihat Hasil** di bagian bawah untuk melihat skor dan pembahasan.")
 
-# --- 3. Initialize Database Automatically ---
-DB_PATH = "bike_catalog.db"
-if not os.path.exists(DB_PATH):
-    with st.spinner("Setting up the database from Excel file..."):
-        result = init_database()
-        st.toast(result)
+# Fungsi membaca soal dari file .docx
+def load_questions(doc_path):
+    doc = Document(doc_path)
+    text = "\n".join([p.text for p in doc.paragraphs])
 
-# --- 4. API Key and Agent Initialization ---
-if not google_api_key:
-    st.info("Please add your Google AI API key in the sidebar to start chatting.", icon="🗝️")
-    st.stop()
+    # Pola untuk memisahkan soal berdasarkan nomor (1., 2., dst)
+    pattern = r"(\d+\..*?)(?=(?:\n\d+\.|\Z))"
+    questions_raw = re.findall(pattern, text, flags=re.S)
 
-@tool
-def execute_sql(sql_query: str):
-    """
-    Execute a SQL query against the bike catalog database.
-    """
-    result = text_to_sql(sql_query)
-    return result
+    questions = []
+    for q in questions_raw:
+        # Ambil pertanyaan, opsi, dan jawaban benar
+        lines = [line.strip() for line in q.split("\n") if line.strip()]
+        question_line = lines[0]
+        question_text = re.sub(r"^\d+\.\s*", "", question_line)
 
-@tool
-def get_schema_info():
-    """
-    Get schema and sample data to help build SQL queries.
-    """
-    return get_database_info()
+        # Cari opsi
+        options = [l for l in lines if re.match(r"^[A-D]\.", l)]
+        # Cari jawaban benar
+        answer_match = re.search(r"✅ Jawaban[: ]*([A-D])", q)
+        correct = answer_match.group(1) if answer_match else None
 
-if ("agent" not in st.session_state) or (getattr(st.session_state, "_last_key", None) != google_api_key):
-    try:
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=google_api_key,
-            temperature=0.2
-        )
+        if options and correct:
+            questions.append({
+                "question": question_text,
+                "options": options,
+                "answer": correct
+            })
+    return questions
 
-        st.session_state.agent = create_react_agent(
-            model=llm,
-            tools=[get_schema_info, execute_sql],
-            prompt="""
-You are a helpful assistant that can answer questions about a motorcycle catalog using SQL.
 
-Steps:
-1. Use get_schema_info tool to understand the database structure.
-2. Write SQL query based on user question and database schema.
-3. Use execute_sql to get results.
-4. Return results in simple explanation (do NOT show SQL query).
+# Load soal dari file
+questions = load_questions("Soal Kompetensi.docx")
 
-Rules:
-- Use SQLite syntax
-- Don't show SQL to the user
-- Don't ask user to write SQL
-- Explain any SQL errors if they occur
-            """
-        )
+# Session state untuk jawaban user
+if "user_answers" not in st.session_state:
+    st.session_state.user_answers = {}
 
-        st.session_state._last_key = google_api_key
-        st.session_state.pop("messages", None)
-    except Exception as e:
-        st.error(f"Invalid API Key or configuration error: {e}")
-        st.stop()
+st.write(f"Total Soal: **{len(questions)}**")
 
-# --- 5. Chat History Management ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# Tampilkan soal satu per satu
+for idx, q in enumerate(questions):
+    st.markdown(f"### {idx + 1}. {q['question']}")
+    user_choice = st.radio(
+        "Pilih jawaban:",
+        q["options"],
+        key=f"q_{idx}"
+    )
+    st.session_state.user_answers[idx] = user_choice[0]  # Ambil huruf A/B/C/D
 
-if reset_button:
-    st.session_state.pop("agent", None)
-    st.session_state.pop("messages", None)
-    st.rerun()
+st.markdown("---")
 
-# --- 6. Display Past Messages ---
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+# Tombol untuk lihat hasil
+if st.button("🎯 Lihat Hasil"):
+    correct_count = 0
+    wrong_details = []
 
-# --- 7. Handle User Input ---
-prompt = st.chat_input("Ask about the motorcycle catalog...")
+    for idx, q in enumerate(questions):
+        user_answer = st.session_state.user_answers.get(idx)
+        if user_answer == q["answer"]:
+            correct_count += 1
+        else:
+            wrong_details.append({
+                "no": idx + 1,
+                "question": q["question"],
+                "your": user_answer,
+                "correct": q["answer"]
+            })
 
-if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    total = len(questions)
+    score = round((correct_count / total) * 100, 2)
 
-    try:
-        messages = []
-        for msg in st.session_state.messages:
-            if msg["role"] == "user":
-                messages.append(HumanMessage(content=msg["content"]))
-            elif msg["role"] == "assistant":
-                messages.append(AIMessage(content=msg["content"]))
+    st.success(f"✅ Skor Anda: **{score}%** ({correct_count} benar dari {total} soal)")
+    st.markdown("---")
 
-        with st.spinner("Thinking..."):
-            response = st.session_state.agent.invoke({"messages": messages})
+    if wrong_details:
+        st.error("❌ Berikut soal yang Anda jawab salah:")
+        for w in wrong_details:
+            st.markdown(
+                f"**{w['no']}. {w['question']}**  \n"
+                f"Jawaban Anda: `{w['your']}`  \n"
+                f"Jawaban Benar: ✅ `{w['correct']}`"
+            )
+    else:
+        st.balloons()
+        st.success("🎉 Semua jawaban Anda benar! Luar biasa!")
 
-            answer = "I'm sorry, I couldn't generate a response."
-
-            for msg in reversed(response["messages"]):
-                if isinstance(msg, AIMessage):
-                    if isinstance(msg.content, str):
-                        answer = msg.content
-                        break
-                    elif isinstance(msg.content, list):
-                        try:
-                            answer = "\n".join(str(part) for part in msg.content if isinstance(part, str))
-                            break
-                        except:
-                            continue
-                elif hasattr(msg, "content") and isinstance(msg.content, str):
-                    answer = msg.content
-                    break
-
-    except Exception as e:
-        answer = f"An error occurred: {e}"
-
-    with st.chat_message("assistant"):
-        st.markdown(answer)
-
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+st.markdown("---")
+st.caption("Dibuat oleh ChatGPT - Streamlit Post Test Generator untuk ISO 9001 & ISO 22000")
