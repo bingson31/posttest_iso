@@ -1,149 +1,138 @@
+# app.py
+
 import streamlit as st
-from docx import Document
-import re
+import os
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.prebuilt import create_react_agent
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.tools import tool
+from database_tools import text_to_sql, init_database, get_database_info
 
-st.set_page_config(page_title="Post Test ISO 9001 & 22000", layout="wide")
+# --- 1. Page Configuration and Title ---
+st.title("🏍️ Bike Catalog SQL Chatbot")
+st.caption("Ask questions about motorcycle catalog data using natural language")
 
-# --- CSS untuk efek highlight jawaban terpilih ---
-st.markdown("""
-<style>
-.question-box {
-    background-color: #f9f9f9;
-    padding: 16px;
-    border-radius: 12px;
-    margin-bottom: 20px;
-    border: 1px solid #ddd;
-}
-.option {
-    padding: 10px;
-    border-radius: 8px;
-    margin: 4px 0;
-    cursor: pointer;
-    border: 1px solid #e0e0e0;
-    transition: all 0.2s ease-in-out;
-}
-.option:hover {
-    background-color: #f1f1f1;
-}
-.option-selected {
-    background-color: #d1ffd6 !important; /* hijau muda */
-    border-color: #2ecc71 !important;
-    font-weight: bold;
-}
-.submit-btn {
-    background-color: #2ecc71;
-    color: white;
-    padding: 10px 20px;
-    border-radius: 8px;
-    border: none;
-    cursor: pointer;
-    font-size: 16px;
-}
-</style>
-""", unsafe_allow_html=True)
+# --- 2. Sidebar for Settings ---
+with st.sidebar:
+    st.subheader("Settings")
+    google_api_key = st.text_input("Google AI API Key", type="password")
+    reset_button = st.button("Reset Conversation", help="Clear all messages and start fresh")
 
-st.title("🧩 Post Test ISO 9001:2015 & ISO 22000:2018")
-st.write(
-    "Jawablah semua pertanyaan. Tombol **Lihat Hasil** akan muncul otomatis setelah semua soal dijawab."
-)
+# --- 3. Initialize Database Automatically ---
+DB_PATH = "bike_catalog.db"
+if not os.path.exists(DB_PATH):
+    with st.spinner("Setting up the database from Excel file..."):
+        result = init_database()
+        st.toast(result)
 
-# --- Fungsi: Baca dan parsing soal dari DOCX ---
-def load_questions(doc_path):
-    doc = Document(doc_path)
-    text = "\n".join([p.text for p in doc.paragraphs])
-    pattern = r"(\d+\..*?)(?=(?:\n\d+\.|\Z))"
-    raw_questions = re.findall(pattern, text, flags=re.S)
-
-    questions = []
-    for q in raw_questions:
-        lines = [line.strip() for line in q.split("\n") if line.strip()]
-        question_text = re.sub(r"^\d+\.\s*", "", lines[0])
-        options = [l for l in lines if re.match(r"^[A-D]\.", l)]
-        correct_match = re.search(r"✅\s*Jawaban[: ]*([A-D])", q)
-        correct = correct_match.group(1) if correct_match else None
-        if options and correct:
-            questions.append({
-                "question": question_text,
-                "options": options,
-                "answer": correct
-            })
-    return questions
-
-
-# --- Load file soal ---
-questions = load_questions("Soal Kompetensi.docx")
-if not questions:
-    st.error("❌ Tidak ditemukan soal. Pastikan file 'Soal Kompetensi.docx' tersedia.")
+# --- 4. API Key and Agent Initialization ---
+if not google_api_key:
+    st.info("Please add your Google AI API key in the sidebar to start chatting.", icon="🗝️")
     st.stop()
 
-# --- Inisialisasi jawaban user ---
-if "user_answers" not in st.session_state:
-    st.session_state.user_answers = {}
+@tool
+def execute_sql(sql_query: str):
+    """
+    Execute a SQL query against the bike catalog database.
+    """
+    result = text_to_sql(sql_query)
+    return result
 
-# --- Tampilkan soal ---
-st.write(f"📄 Total Soal: **{len(questions)}**")
-st.markdown("---")
+@tool
+def get_schema_info():
+    """
+    Get schema and sample data to help build SQL queries.
+    """
+    return get_database_info()
 
-for i, q in enumerate(questions):
-    st.markdown(f"### {i+1}. {q['question']}")
-    st.markdown('<div class="question-box">', unsafe_allow_html=True)
+if ("agent" not in st.session_state) or (getattr(st.session_state, "_last_key", None) != google_api_key):
+    try:
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            google_api_key=google_api_key,
+            temperature=0.2
+        )
 
-    # Loop opsi jawaban
-    for opt in q["options"]:
-        opt_letter = opt[0]  # ambil huruf (A/B/C/D)
-        selected = st.session_state.user_answers.get(i) == opt_letter
-        opt_class = "option option-selected" if selected else "option"
+        st.session_state.agent = create_react_agent(
+            model=llm,
+            tools=[get_schema_info, execute_sql],
+            prompt="""
+You are a helpful assistant that can answer questions about a motorcycle catalog using SQL.
 
-        # Tombol per opsi
-        if st.button(opt, key=f"btn_{i}_{opt_letter}"):
-            st.session_state.user_answers[i] = opt_letter
-            st.rerun()  # refresh agar highlight langsung muncul
+Steps:
+1. Use get_schema_info tool to understand the database structure.
+2. Write SQL query based on user question and database schema.
+3. Use execute_sql to get results.
+4. Return results in simple explanation (do NOT show SQL query).
 
-        # Warna highlight via CSS
-        st.markdown(f'<div class="{opt_class}">{opt}</div>', unsafe_allow_html=True)
+Rules:
+- Use SQLite syntax
+- Don't show SQL to the user
+- Don't ask user to write SQL
+- Explain any SQL errors if they occur
+            """
+        )
 
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.write("")
+        st.session_state._last_key = google_api_key
+        st.session_state.pop("messages", None)
+    except Exception as e:
+        st.error(f"Invalid API Key or configuration error: {e}")
+        st.stop()
 
-st.markdown("---")
+# --- 5. Chat History Management ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# --- Logika: tombol hasil hanya muncul jika semua soal sudah dijawab ---
-answered = len(st.session_state.user_answers)
-total = len(questions)
+if reset_button:
+    st.session_state.pop("agent", None)
+    st.session_state.pop("messages", None)
+    st.rerun()
 
-if answered < total:
-    st.info(f"📝 Anda telah menjawab {answered} dari {total} soal. Lengkapi semua jawaban untuk melihat hasil.")
-else:
-    if st.button("🎯 Lihat Hasil", key="submit", use_container_width=True):
-        correct = 0
-        wrong = []
-        for i, q in enumerate(questions):
-            user_ans = st.session_state.user_answers.get(i)
-            if user_ans == q["answer"]:
-                correct += 1
-            else:
-                wrong.append({
-                    "no": i+1,
-                    "question": q["question"],
-                    "your": user_ans,
-                    "correct": q["answer"]
-                })
+# --- 6. Display Past Messages ---
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-        score = round((correct / total) * 100, 2)
-        st.success(f"✅ Skor Anda: **{score}%** ({correct} benar dari {total} soal)")
-        st.markdown("---")
+# --- 7. Handle User Input ---
+prompt = st.chat_input("Ask about the motorcycle catalog...")
 
-        if wrong:
-            st.error("❌ Soal yang Anda jawab salah:")
-            for w in wrong:
-                st.markdown(
-                    f"**{w['no']}. {w['question']}**  \n"
-                    f"Jawaban Anda: `{w['your']}`  \n"
-                    f"Jawaban Benar: ✅ `{w['correct']}`"
-                )
-        else:
-            st.balloons()
-            st.success("🎉 Semua jawaban Anda benar! Hebat sekali!")
+if prompt:
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-st.markdown("---")
-st.caption("Dibuat oleh ChatGPT – Post Test Generator ISO 9001 & 22000 (Streamlit)")
+    try:
+        messages = []
+        for msg in st.session_state.messages:
+            if msg["role"] == "user":
+                messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                messages.append(AIMessage(content=msg["content"]))
+
+        with st.spinner("Thinking..."):
+            response = st.session_state.agent.invoke({"messages": messages})
+
+            answer = "I'm sorry, I couldn't generate a response."
+
+            for msg in reversed(response["messages"]):
+                if isinstance(msg, AIMessage):
+                    if isinstance(msg.content, str):
+                        answer = msg.content
+                        break
+                    elif isinstance(msg.content, list):
+                        try:
+                            answer = "\n".join(str(part) for part in msg.content if isinstance(part, str))
+                            break
+                        except:
+                            continue
+                elif hasattr(msg, "content") and isinstance(msg.content, str):
+                    answer = msg.content
+                    break
+
+    except Exception as e:
+        answer = f"An error occurred: {e}"
+
+    with st.chat_message("assistant"):
+        st.markdown(answer)
+
+    st.session_state.messages.append({"role": "assistant", "content": answer})
