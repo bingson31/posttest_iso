@@ -4,31 +4,63 @@ import re
 
 st.set_page_config(page_title="Post Test ISO 9001 & 22000", layout="wide")
 
-st.title("🧩 Post Test ISO 9001:2015 & ISO 22000:2018")
-st.write("Jawablah semua pertanyaan berikut, lalu klik **Lihat Hasil** di bagian bawah untuk melihat skor dan pembahasan.")
+# --- CSS untuk efek highlight jawaban terpilih ---
+st.markdown("""
+<style>
+.question-box {
+    background-color: #f9f9f9;
+    padding: 16px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    border: 1px solid #ddd;
+}
+.option {
+    padding: 10px;
+    border-radius: 8px;
+    margin: 4px 0;
+    cursor: pointer;
+    border: 1px solid #e0e0e0;
+    transition: all 0.2s ease-in-out;
+}
+.option:hover {
+    background-color: #f1f1f1;
+}
+.option-selected {
+    background-color: #d1ffd6 !important; /* hijau muda */
+    border-color: #2ecc71 !important;
+    font-weight: bold;
+}
+.submit-btn {
+    background-color: #2ecc71;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+}
+</style>
+""", unsafe_allow_html=True)
 
-# Fungsi membaca soal dari file .docx
+st.title("🧩 Post Test ISO 9001:2015 & ISO 22000:2018")
+st.write(
+    "Jawablah semua pertanyaan. Tombol **Lihat Hasil** akan muncul otomatis setelah semua soal dijawab."
+)
+
+# --- Fungsi: Baca dan parsing soal dari DOCX ---
 def load_questions(doc_path):
     doc = Document(doc_path)
     text = "\n".join([p.text for p in doc.paragraphs])
-
-    # Pola untuk memisahkan soal berdasarkan nomor (1., 2., dst)
     pattern = r"(\d+\..*?)(?=(?:\n\d+\.|\Z))"
-    questions_raw = re.findall(pattern, text, flags=re.S)
+    raw_questions = re.findall(pattern, text, flags=re.S)
 
     questions = []
-    for q in questions_raw:
-        # Ambil pertanyaan, opsi, dan jawaban benar
+    for q in raw_questions:
         lines = [line.strip() for line in q.split("\n") if line.strip()]
-        question_line = lines[0]
-        question_text = re.sub(r"^\d+\.\s*", "", question_line)
-
-        # Cari opsi
+        question_text = re.sub(r"^\d+\.\s*", "", lines[0])
         options = [l for l in lines if re.match(r"^[A-D]\.", l)]
-        # Cari jawaban benar
-        answer_match = re.search(r"✅ Jawaban[: ]*([A-D])", q)
-        correct = answer_match.group(1) if answer_match else None
-
+        correct_match = re.search(r"✅\s*Jawaban[: ]*([A-D])", q)
+        correct = correct_match.group(1) if correct_match else None
         if options and correct:
             questions.append({
                 "question": question_text,
@@ -38,61 +70,80 @@ def load_questions(doc_path):
     return questions
 
 
-# Load soal dari file
+# --- Load file soal ---
 questions = load_questions("Soal Kompetensi.docx")
+if not questions:
+    st.error("❌ Tidak ditemukan soal. Pastikan file 'Soal Kompetensi.docx' tersedia.")
+    st.stop()
 
-# Session state untuk jawaban user
+# --- Inisialisasi jawaban user ---
 if "user_answers" not in st.session_state:
     st.session_state.user_answers = {}
 
-st.write(f"Total Soal: **{len(questions)}**")
+# --- Tampilkan soal ---
+st.write(f"📄 Total Soal: **{len(questions)}**")
+st.markdown("---")
 
-# Tampilkan soal satu per satu
-for idx, q in enumerate(questions):
-    st.markdown(f"### {idx + 1}. {q['question']}")
-    user_choice = st.radio(
-        "Pilih jawaban:",
-        q["options"],
-        key=f"q_{idx}"
-    )
-    st.session_state.user_answers[idx] = user_choice[0]  # Ambil huruf A/B/C/D
+for i, q in enumerate(questions):
+    st.markdown(f"### {i+1}. {q['question']}")
+    st.markdown('<div class="question-box">', unsafe_allow_html=True)
+
+    # Loop opsi jawaban
+    for opt in q["options"]:
+        opt_letter = opt[0]  # ambil huruf (A/B/C/D)
+        selected = st.session_state.user_answers.get(i) == opt_letter
+        opt_class = "option option-selected" if selected else "option"
+
+        # Tombol per opsi
+        if st.button(opt, key=f"btn_{i}_{opt_letter}"):
+            st.session_state.user_answers[i] = opt_letter
+            st.rerun()  # refresh agar highlight langsung muncul
+
+        # Warna highlight via CSS
+        st.markdown(f'<div class="{opt_class}">{opt}</div>', unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.write("")
 
 st.markdown("---")
 
-# Tombol untuk lihat hasil
-if st.button("🎯 Lihat Hasil"):
-    correct_count = 0
-    wrong_details = []
+# --- Logika: tombol hasil hanya muncul jika semua soal sudah dijawab ---
+answered = len(st.session_state.user_answers)
+total = len(questions)
 
-    for idx, q in enumerate(questions):
-        user_answer = st.session_state.user_answers.get(idx)
-        if user_answer == q["answer"]:
-            correct_count += 1
+if answered < total:
+    st.info(f"📝 Anda telah menjawab {answered} dari {total} soal. Lengkapi semua jawaban untuk melihat hasil.")
+else:
+    if st.button("🎯 Lihat Hasil", key="submit", use_container_width=True):
+        correct = 0
+        wrong = []
+        for i, q in enumerate(questions):
+            user_ans = st.session_state.user_answers.get(i)
+            if user_ans == q["answer"]:
+                correct += 1
+            else:
+                wrong.append({
+                    "no": i+1,
+                    "question": q["question"],
+                    "your": user_ans,
+                    "correct": q["answer"]
+                })
+
+        score = round((correct / total) * 100, 2)
+        st.success(f"✅ Skor Anda: **{score}%** ({correct} benar dari {total} soal)")
+        st.markdown("---")
+
+        if wrong:
+            st.error("❌ Soal yang Anda jawab salah:")
+            for w in wrong:
+                st.markdown(
+                    f"**{w['no']}. {w['question']}**  \n"
+                    f"Jawaban Anda: `{w['your']}`  \n"
+                    f"Jawaban Benar: ✅ `{w['correct']}`"
+                )
         else:
-            wrong_details.append({
-                "no": idx + 1,
-                "question": q["question"],
-                "your": user_answer,
-                "correct": q["answer"]
-            })
-
-    total = len(questions)
-    score = round((correct_count / total) * 100, 2)
-
-    st.success(f"✅ Skor Anda: **{score}%** ({correct_count} benar dari {total} soal)")
-    st.markdown("---")
-
-    if wrong_details:
-        st.error("❌ Berikut soal yang Anda jawab salah:")
-        for w in wrong_details:
-            st.markdown(
-                f"**{w['no']}. {w['question']}**  \n"
-                f"Jawaban Anda: `{w['your']}`  \n"
-                f"Jawaban Benar: ✅ `{w['correct']}`"
-            )
-    else:
-        st.balloons()
-        st.success("🎉 Semua jawaban Anda benar! Luar biasa!")
+            st.balloons()
+            st.success("🎉 Semua jawaban Anda benar! Hebat sekali!")
 
 st.markdown("---")
-st.caption("Dibuat oleh ChatGPT - Streamlit Post Test Generator untuk ISO 9001 & ISO 22000")
+st.caption("Dibuat oleh ChatGPT – Post Test Generator ISO 9001 & 22000 (Streamlit)")
