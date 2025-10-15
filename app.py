@@ -111,4 +111,5 @@ else:
         st.rerun()  # ✅ Perbaikan: ganti dari st.experimental_rerun()
 
 st.markdown("---")
-st.caption("Dibuat oleh ChatGPT - Streamlit Post Test Generator untuk ISO 9001 & ISO 22000")
+st.caption("Dibuat oleh BNG - Streamlit Post Test Generator untuk ISO 9001 & ISO 22000")
+
