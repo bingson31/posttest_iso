@@ -65,7 +65,7 @@ if not st.session_state.show_result:
     # Tombol untuk lihat hasil
     if st.button("🎯 Lihat Hasil"):
         st.session_state.show_result = True
-        st.experimental_rerun()
+        st.rerun()  # ✅ Perbaikan: ganti dari st.experimental_rerun()
 
 else:
     # Menampilkan hasil
@@ -108,7 +108,7 @@ else:
     if st.button("🔁 Reset Test"):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
-        st.experimental_rerun()
+        st.rerun()  # ✅ Perbaikan: ganti dari st.experimental_rerun()
 
 st.markdown("---")
 st.caption("Dibuat oleh ChatGPT - Streamlit Post Test Generator untuk ISO 9001 & ISO 22000")
