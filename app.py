@@ -18,7 +18,6 @@ def load_questions(doc_path):
 
     questions = []
     for q in questions_raw:
-        # Ambil pertanyaan, opsi, dan jawaban benar
         lines = [line.strip() for line in q.split("\n") if line.strip()]
         question_line = lines[0]
         question_text = re.sub(r"^\d+\.\s*", "", question_line)
@@ -45,22 +44,31 @@ questions = load_questions("Soal Kompetensi.docx")
 if "user_answers" not in st.session_state:
     st.session_state.user_answers = {}
 
+if "show_result" not in st.session_state:
+    st.session_state.show_result = False
+
 st.write(f"Total Soal: **{len(questions)}**")
 
 # Tampilkan soal satu per satu
-for idx, q in enumerate(questions):
-    st.markdown(f"### {idx + 1}. {q['question']}")
-    user_choice = st.radio(
-        "Pilih jawaban:",
-        q["options"],
-        key=f"q_{idx}"
-    )
-    st.session_state.user_answers[idx] = user_choice[0]  # Ambil huruf A/B/C/D
+if not st.session_state.show_result:
+    for idx, q in enumerate(questions):
+        st.markdown(f"### {idx + 1}. {q['question']}")
+        user_choice = st.radio(
+            "Pilih jawaban:",
+            q["options"],
+            key=f"q_{idx}"
+        )
+        st.session_state.user_answers[idx] = user_choice[0]  # Ambil huruf A/B/C/D
 
-st.markdown("---")
+    st.markdown("---")
 
-# Tombol untuk lihat hasil
-if st.button("🎯 Lihat Hasil"):
+    # Tombol untuk lihat hasil
+    if st.button("🎯 Lihat Hasil"):
+        st.session_state.show_result = True
+        st.experimental_rerun()
+
+else:
+    # Menampilkan hasil
     correct_count = 0
     wrong_details = []
 
@@ -93,6 +101,14 @@ if st.button("🎯 Lihat Hasil"):
     else:
         st.balloons()
         st.success("🎉 Semua jawaban Anda benar! Luar biasa!")
+
+    st.markdown("---")
+
+    # 🔁 Tombol Reset Test
+    if st.button("🔁 Reset Test"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.experimental_rerun()
 
 st.markdown("---")
 st.caption("Dibuat oleh ChatGPT - Streamlit Post Test Generator untuk ISO 9001 & ISO 22000")
